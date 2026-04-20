@@ -19,11 +19,9 @@ export default function Home() {
   };
 
   return (
-    <div style={styles.wrapper}>
-
+    <div style={styles.container}>
       <div style={styles.card}>
         <h1>🎥 Google Meet Clone</h1>
-        <p>Start or join a secure video meeting</p>
 
         <button onClick={createMeeting} style={styles.primary}>
           ➕ Create Meeting
@@ -36,19 +34,17 @@ export default function Home() {
             onChange={(e) => setLink(e.target.value)}
             style={styles.input}
           />
-
           <button onClick={joinMeeting} style={styles.secondary}>
             Join
           </button>
         </div>
-
       </div>
     </div>
   );
 }
 
 const styles = {
-  wrapper: {
+  container: {
     height: "100vh",
     display: "flex",
     justifyContent: "center",
@@ -56,44 +52,36 @@ const styles = {
     background: "#0f0f10",
     color: "#fff",
   },
-
   card: {
-    padding: "40px",
+    padding: 40,
     background: "rgba(255,255,255,0.05)",
-    borderRadius: "20px",
-    backdropFilter: "blur(10px)",
+    borderRadius: 20,
     textAlign: "center",
   },
-
   primary: {
+    marginTop: 20,
     padding: "12px 20px",
     background: "#1a73e8",
     border: "none",
-    borderRadius: "10px",
     color: "#fff",
-    marginTop: "20px",
-    cursor: "pointer",
+    borderRadius: 10,
   },
-
   joinBox: {
-    marginTop: "20px",
+    marginTop: 20,
     display: "flex",
-    gap: "10px",
+    gap: 10,
   },
-
   input: {
-    padding: "10px",
-    borderRadius: "8px",
+    padding: 10,
+    borderRadius: 8,
     border: "none",
-    width: "250px",
+    width: 250,
   },
-
   secondary: {
     padding: "10px 15px",
-    borderRadius: "8px",
     background: "#333",
     color: "#fff",
     border: "none",
-    cursor: "pointer",
+    borderRadius: 8,
   },
 };

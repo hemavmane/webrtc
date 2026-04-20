@@ -9,19 +9,65 @@ export default function MeetPage() {
 
   const localVideoRef = useRef();
   const remoteVideoRef = useRef();
+  const peerRef = useRef();
+  const remoteStreamRef = useRef(new MediaStream());
 
   const [streamStarted, setStreamStarted] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [cameraOn, setCameraOn] = useState(true);
+  const [users, setUsers] = useState([]);
 
+  // ================= JOIN ROOM =================
   useEffect(() => {
     socket.emit("join-room", { roomId });
+
+    socket.on("room-users", (data) => {
+      setUsers(data);
+    });
+
+    socket.on("user-joined", (data) => {
+      setUsers((prev) => [...prev, data.user]);
+    });
+
+    socket.on("user-left", (data) => {
+      setUsers((prev) => prev.filter((u) => u.id !== data.id));
+    });
+
+    // OFFER
+    socket.on("offer", async ({ from, offer }) => {
+      peerRef.current = createPeer(from);
+
+      await peerRef.current.setRemoteDescription(offer);
+
+      const answer = await peerRef.current.createAnswer();
+      await peerRef.current.setLocalDescription(answer);
+
+      socket.emit("answer", {
+        to: from,
+        answer,
+      });
+    });
+
+    // ANSWER
+    socket.on("answer", async ({ answer }) => {
+      await peerRef.current.setRemoteDescription(answer);
+    });
+
+    // ICE
+    socket.on("ice-candidate", async ({ candidate }) => {
+      if (candidate) {
+        await peerRef.current.addIceCandidate(candidate);
+      }
+    });
   }, [roomId]);
 
+  // ================= MEDIA =================
   const startMedia = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
-      audio: true,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
     });
 
     localVideoRef.current.srcObject = stream;
@@ -30,79 +76,84 @@ export default function MeetPage() {
     setStreamStarted(true);
   };
 
-  const toggleMute = () => {
-    const stream = window.localStream;
-    stream.getAudioTracks().forEach(t => (t.enabled = !t.enabled));
-    setIsMuted(!isMuted);
+  // ================= PEER =================
+  const createPeer = (to) => {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+      ],
+    });
+
+    window.localStream.getTracks().forEach((track) => {
+      pc.addTrack(track, window.localStream);
+    });
+
+    pc.ontrack = (event) => {
+      event.streams[0].getTracks().forEach((track) => {
+        remoteStreamRef.current.addTrack(track);
+      });
+
+      remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("ice-candidate", {
+          to,
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    return pc;
   };
 
-  const toggleCamera = () => {
-    const stream = window.localStream;
-    stream.getVideoTracks().forEach(t => (t.enabled = !t.enabled));
-    setCameraOn(!cameraOn);
-  };
+  // ================= START CALL =================
+  const startCall = async (toSocketId) => {
+    peerRef.current = createPeer(toSocketId);
 
-  const endCall = () => {
-    window.localStream?.getTracks().forEach(t => t.stop());
-    window.location.href = "/";
+    const offer = await peerRef.current.createOffer();
+    await peerRef.current.setLocalDescription(offer);
+
+    socket.emit("offer", {
+      to: toSocketId,
+      offer,
+    });
   };
 
   return (
     <div style={styles.wrapper}>
 
-      {/* HEADER */}
-      <div style={styles.header}>
-        <div>🎥 Meet</div>
-        <div style={styles.roomId}>{roomId}</div>
-      </div>
-
-      {/* VIDEO AREA */}
+      {/* VIDEO GRID */}
       <div style={styles.grid}>
-
-        <div style={styles.videoBox}>
-          <video
-            ref={localVideoRef}
-            autoPlay
-            muted
-            playsInline
-            style={styles.video}
-          />
-          <div style={styles.label}>You</div>
-        </div>
-
-        <div style={styles.videoBox}>
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            style={styles.video}
-          />
-          <div style={styles.label}>Participant</div>
-        </div>
-
+        <video ref={localVideoRef} autoPlay muted playsInline style={styles.video} />
+        <video ref={remoteVideoRef} autoPlay playsInline style={styles.video} />
       </div>
 
-      {/* FLOATING CONTROLS */}
+      {/* CONTROLS */}
       <div style={styles.controls}>
-
         {!streamStarted && (
-          <button onClick={startMedia} style={styles.startBtn}>
+          <button onClick={startMedia} style={styles.btn}>
             🎥 Start
           </button>
         )}
 
-        <button onClick={toggleMute} style={styles.btn}>
-          {isMuted ? "🔇" : "🎤"}
+        <button
+          onClick={() => startCall(users?.[0]?.id)}
+          style={styles.btn}
+        >
+          📞 Call
         </button>
+      </div>
 
-        <button onClick={toggleCamera} style={styles.btn}>
-          {cameraOn ? "📷" : "🚫"}
-        </button>
-
-        <button onClick={endCall} style={styles.endBtn}>
-          ❌
-        </button>
-
+      {/* PARTICIPANTS */}
+      <div style={styles.sidebar}>
+        <h4>Participants</h4>
+        {users.map((u, i) => (
+          <div key={i} style={styles.user}>
+            👤 {u.name || "User"}
+          </div>
+        ))}
       </div>
 
     </div>
@@ -118,90 +169,51 @@ const styles = {
     flexDirection: "column",
   },
 
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    padding: "12px 20px",
-    background: "rgba(255,255,255,0.05)",
-    backdropFilter: "blur(10px)",
-    borderBottom: "1px solid rgba(255,255,255,0.1)",
-  },
-
-  roomId: {
-    fontSize: "12px",
-    opacity: 0.6,
-  },
-
   grid: {
     flex: 1,
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-    gap: "15px",
-    padding: "15px",
-  },
-
-  videoBox: {
-    position: "relative",
-    borderRadius: "15px",
-    overflow: "hidden",
-    background: "#000",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 10,
+    padding: 10,
   },
 
   video: {
     width: "100%",
     height: "100%",
+    background: "#000",
+    borderRadius: 10,
     objectFit: "cover",
-    borderRadius: "15px",
-  },
-
-  label: {
-    position: "absolute",
-    bottom: 10,
-    left: 10,
-    background: "rgba(0,0,0,0.6)",
-    padding: "4px 8px",
-    borderRadius: "6px",
-    fontSize: "12px",
   },
 
   controls: {
-    position: "fixed",
-    bottom: 20,
-    left: "50%",
-    transform: "translateX(-50%)",
+    padding: 10,
     display: "flex",
-    gap: "12px",
-    padding: "12px 18px",
-    background: "rgba(255,255,255,0.08)",
-    backdropFilter: "blur(15px)",
-    borderRadius: "40px",
+    justifyContent: "center",
+    gap: 10,
+    background: "#111",
   },
 
   btn: {
-    width: "45px",
-    height: "45px",
-    borderRadius: "50%",
-    border: "none",
-    background: "#333",
-    color: "#fff",
-    cursor: "pointer",
-  },
-
-  startBtn: {
     padding: "10px 15px",
-    borderRadius: "20px",
     background: "#1a73e8",
     border: "none",
     color: "#fff",
+    borderRadius: 8,
   },
 
-  endBtn: {
-    width: "45px",
-    height: "45px",
-    borderRadius: "50%",
-    background: "red",
-    border: "none",
-    color: "#fff",
-    cursor: "pointer",
+  sidebar: {
+    position: "absolute",
+    right: 10,
+    top: 60,
+    background: "rgba(255,255,255,0.05)",
+    padding: 10,
+    borderRadius: 10,
+  },
+
+  user: {
+    padding: 5,
+    marginTop: 5,
+    background: "#222",
+    borderRadius: 5,
   },
 };
