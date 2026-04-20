@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { io } from "socket.io-client";
-import "./Meet.css";
+
 
 // WebRTC namespace (IMPORTANT)
 const socket = io("https://api.justoconsulting.com");
