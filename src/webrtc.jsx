@@ -5,157 +5,162 @@ import { io } from "socket.io-client";
 const socket = io("https://api.justoconsulting.com");
 
 export default function MeetPage() {
-
   const { roomId } = useParams();
 
-  const localRef = useRef();
-  const remoteRefs = useRef({});
+  const localVideoRef = useRef();
+  const remoteVideoRef = useRef();
+  const peerRef = useRef();
 
-  const [users, setUsers] = useState([]);
-
-  const pc = useRef({});
+  const [streamStarted, setStreamStarted] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [cameraOn, setCameraOn] = useState(true);
 
   // ================= JOIN ROOM =================
   useEffect(() => {
+    socket.emit("join-room", { roomId });
+  }, [roomId]);
 
-    socket.emit("join-room", {
-      roomId,
-      userName: "User"
-    });
-
-    socket.on("room-users", (users) => {
-      setUsers(users);
-    });
-
-    socket.on("user-joined", (user) => {
-      console.log("User joined", user);
-    });
-
-    socket.on("user-left", (user) => {
-      console.log("User left", user);
-    });
-
-    // WebRTC signals
-    socket.on("offer", async ({ offer, from }) => {
-      await createAnswer(from, offer);
-    });
-
-    socket.on("answer", async ({ answer, from }) => {
-      await pc.current[from]?.setRemoteDescription(answer);
-    });
-
-    socket.on("ice-candidate", async ({ candidate }) => {
-      await pc.current.addIceCandidate(candidate);
-    });
-
-  }, []);
-
-  // ================= MEDIA =================
-  const getMedia = async () => {
+  // ================= START MEDIA =================
+  const startMedia = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
       audio: true,
     });
 
-    localRef.current.srcObject = stream;
-    return stream;
+    localVideoRef.current.srcObject = stream;
+    window.localStream = stream;
+
+    setStreamStarted(true);
   };
 
-  // ================= CREATE OFFER =================
-  const createOffer = async (toSocketId) => {
-
-    const stream = await getMedia();
-
-    pc.current[toSocketId] = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" }
-      ]
-    });
-
-    stream.getTracks().forEach(track => {
-      pc.current[toSocketId].addTrack(track, stream);
-    });
-
-    pc.current[toSocketId].ontrack = (e) => {
-      remoteRefs.current[toSocketId].srcObject = e.streams[0];
-    };
-
-    pc.current[toSocketId].onicecandidate = (e) => {
-      socket.emit("ice-candidate", {
-        roomId,
-        candidate: e.candidate,
-        to: toSocketId,
-      });
-    };
-
-    const offer = await pc.current[toSocketId].createOffer();
-    await pc.current[toSocketId].setLocalDescription(offer);
-
-    socket.emit("offer", {
-      roomId,
-      offer,
-    });
+  // ================= MUTE =================
+  const toggleMute = () => {
+    const stream = window.localStream;
+    stream.getAudioTracks().forEach(t => (t.enabled = !t.enabled));
+    setIsMuted(!isMuted);
   };
 
-  // ================= ANSWER =================
-  const createAnswer = async (from, offer) => {
+  // ================= CAMERA =================
+  const toggleCamera = () => {
+    const stream = window.localStream;
+    stream.getVideoTracks().forEach(t => (t.enabled = !t.enabled));
+    setCameraOn(!cameraOn);
+  };
 
-    const stream = await getMedia();
-
-    pc.current[from] = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" }
-      ]
-    });
-
-    stream.getTracks().forEach(track => {
-      pc.current[from].addTrack(track, stream);
-    });
-
-    pc.current[from].ontrack = (e) => {
-      remoteRefs.current[from].srcObject = e.streams[0];
-    };
-
-    await pc.current[from].setRemoteDescription(offer);
-
-    const answer = await pc.current[from].createAnswer();
-    await pc.current[from].setLocalDescription(answer);
-
-    socket.emit("answer", {
-      roomId,
-      answer,
-      to: from,
-    });
+  // ================= END CALL =================
+  const endCall = () => {
+    window.localStream?.getTracks().forEach(track => track.stop());
+    window.location.href = "/";
   };
 
   return (
-    <div>
+    <div style={styles.wrapper}>
 
-      <h2>🎥 Meeting Room</h2>
-      <p>{roomId}</p>
-
-      <div>
-        <video ref={localRef} autoPlay muted width="300" />
+      {/* TOP BAR */}
+      <div style={styles.topBar}>
+        <h3>📍 Room: {roomId}</h3>
       </div>
 
-      <h3>Participants</h3>
+      {/* VIDEO AREA */}
+      <div style={styles.videoGrid}>
 
-      {users.map(user => (
-        <div key={user.id}>
-          {user.name}
+        <video
+          ref={localVideoRef}
+          autoPlay
+          muted
+          playsInline
+          style={styles.video}
+        />
 
-          <button onClick={() => createOffer(user.id)}>
-            Call
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          style={styles.video}
+        />
+
+      </div>
+
+      {/* CONTROLS */}
+      <div style={styles.controls}>
+
+        {!streamStarted && (
+          <button onClick={startMedia} style={styles.startBtn}>
+            🎥 Start
           </button>
+        )}
 
-          <video
-            ref={(el) => remoteRefs.current[user.id] = el}
-            autoPlay
-            width="300"
-          />
-        </div>
-      ))}
+        <button onClick={toggleMute} style={styles.btn}>
+          {isMuted ? "🔇 Unmute" : "🎤 Mute"}
+        </button>
+
+        <button onClick={toggleCamera} style={styles.btn}>
+          {cameraOn ? "📷 Off" : "📷 On"}
+        </button>
+
+        <button onClick={endCall} style={styles.endBtn}>
+          ❌ End
+        </button>
+
+      </div>
 
     </div>
   );
 }
+
+const styles = {
+  wrapper: {
+    height: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    background: "#111",
+    color: "#fff",
+  },
+  topBar: {
+    padding: "10px",
+    background: "#222",
+  },
+  videoGrid: {
+    flex: 1,
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "10px",
+    padding: "10px",
+  },
+  video: {
+    width: "100%",
+    height: "100%",
+    background: "#000",
+    borderRadius: "10px",
+    objectFit: "cover",
+  },
+  controls: {
+    display: "flex",
+    justifyContent: "center",
+    gap: "10px",
+    padding: "10px",
+    background: "#222",
+  },
+  btn: {
+    padding: "10px",
+    background: "#333",
+    color: "#fff",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+  },
+  startBtn: {
+    padding: "10px",
+    background: "#1a73e8",
+    color: "#fff",
+    border: "none",
+    borderRadius: "8px",
+  },
+  endBtn: {
+    padding: "10px",
+    background: "red",
+    color: "#fff",
+    border: "none",
+    borderRadius: "8px",
+  },
+};
