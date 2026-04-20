@@ -1,36 +1,44 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { io } from "socket.io-client";
+import "./Meet.css";
 
-
-const socket = io("https://api.justoconsulting.com/webrtc");
+// WebRTC namespace (IMPORTANT)
+const socket = io("https://api.justoconsulting.com");
 
 export default function Meet() {
   const { roomId } = useParams();
 
-  const localRef = useRef();
-  const remoteRef = useRef();
+  const localVideo = useRef();
+  const remoteVideo = useRef();
   const peerRef = useRef();
 
-  const [users, setUsers] = useState([]);
-  const [streamReady, setStreamReady] = useState(false);
+  const [email, setEmail] = useState("");
+  const [joined, setJoined] = useState(false);
+  const [peerId, setPeerId] = useState(null);
 
   // ================= JOIN ROOM =================
-  useEffect(() => {
-    socket.emit("join-room", { roomId });
+  const joinRoom = () => {
+    if (!email) return alert("Enter email first");
 
-    socket.on("user-joined", (user) => {
-      setUsers((prev) => [...prev, user]);
+    socket.emit("join-room", { roomId, email });
+    setJoined(true);
+  };
+
+  // ================= SOCKET EVENTS =================
+  useEffect(() => {
+    socket.on("user-joined", ({ socketId }) => {
+      setPeerId(socketId);
     });
 
-    // OFFER
     socket.on("offer", async ({ from, offer }) => {
-      await createPeer(from);
+      const pc = createPeer(from);
+      peerRef.current = pc;
 
-      await peerRef.current.setRemoteDescription(offer);
+      await pc.setRemoteDescription(offer);
 
-      const answer = await peerRef.current.createAnswer();
-      await peerRef.current.setLocalDescription(answer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
 
       socket.emit("answer", {
         to: from,
@@ -38,12 +46,10 @@ export default function Meet() {
       });
     });
 
-    // ANSWER
     socket.on("answer", async ({ answer }) => {
       await peerRef.current.setRemoteDescription(answer);
     });
 
-    // ICE
     socket.on("ice-candidate", async ({ candidate }) => {
       if (candidate) {
         await peerRef.current.addIceCandidate(candidate);
@@ -51,9 +57,9 @@ export default function Meet() {
     });
 
     return () => socket.disconnect();
-  }, [roomId]);
+  }, []);
 
-  // ================= START MEDIA =================
+  // ================= START CAMERA =================
   const startMedia = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
@@ -64,16 +70,16 @@ export default function Meet() {
       },
     });
 
-    localRef.current.srcObject = stream;
+    localVideo.current.srcObject = stream;
     window.localStream = stream;
-
-    setStreamReady(true);
   };
 
   // ================= PEER CONNECTION =================
   const createPeer = (to) => {
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+      ],
     });
 
     window.localStream.getTracks().forEach((track) => {
@@ -81,7 +87,7 @@ export default function Meet() {
     });
 
     pc.ontrack = (event) => {
-      remoteRef.current.srcObject = event.streams[0];
+      remoteVideo.current.srcObject = event.streams[0];
     };
 
     pc.onicecandidate = (event) => {
@@ -93,65 +99,66 @@ export default function Meet() {
       }
     };
 
-    peerRef.current = pc;
     return pc;
   };
 
   // ================= START CALL =================
-  const startCall = async (toSocketId) => {
+  const startCall = async (to) => {
     if (!window.localStream) {
       alert("Start camera first");
       return;
     }
 
-    const pc = createPeer(toSocketId);
+    const pc = createPeer(to);
+    peerRef.current = pc;
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
     socket.emit("offer", {
-      to: toSocketId,
+      to,
       offer,
     });
   };
 
-  return (
-    <div className="meet-wrapper">
+  // AUTO CONNECT WHEN PEER JOINS
+  useEffect(() => {
+    if (peerId && window.localStream) {
+      startCall(peerId);
+    }
+  }, [peerId]);
 
-      {/* VIDEO GRID */}
-      <div className="meet-grid">
-        <video ref={localRef} autoPlay muted className="video" />
-        <video ref={remoteRef} autoPlay className="video" />
+  return (
+    <div className="meet-container">
+
+      {/* TOP BAR */}
+      <div className="topbar">
+        <h3>🎥 Hemameet Room</h3>
+        <p>{roomId}</p>
+      </div>
+
+      {/* JOIN BOX */}
+      {!joined && (
+        <div className="join-box">
+          <input
+            placeholder="Enter Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <button onClick={joinRoom}>Join Room</button>
+        </div>
+      )}
+
+      {/* VIDEO AREA */}
+      <div className="video-grid">
+        <video ref={localVideo} autoPlay muted className="video" />
+        <video ref={remoteVideo} autoPlay className="video" />
       </div>
 
       {/* CONTROLS */}
       <div className="controls">
-        {!streamReady && (
-          <button onClick={startMedia} className="btn blue">
-            🎥 Start Camera
-          </button>
-        )}
-
-        <button
-          onClick={() => startCall(users?.[0]?.id)}
-          className="btn green"
-        >
-          📞 Call
-        </button>
-      </div>
-
-      {/* PARTICIPANTS */}
-      <div className="sidebar">
-        <h4>Participants</h4>
-        {users.length === 0 ? (
-          <p>No users yet</p>
-        ) : (
-          users.map((u) => (
-            <div key={u.id} className="user">
-              👤 {u.id}
-            </div>
-          ))
-        )}
+        <button onClick={startMedia}>🎥 Start Camera</button>
+        <button onClick={() => startCall(peerId)}>📞 Call</button>
       </div>
 
     </div>
